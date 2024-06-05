@@ -13,77 +13,17 @@
  */
 
 use std::mem;
+use std::fmt::Display;
+use crate::matrix::*;
+use crate::unsigned::*;
 
 pub struct Galois<T> {
 	order: T,
 	base: T
 }
 
-pub trait Unsigned {
-
-	fn and(&self, other: &Self) -> Self;
-	fn copy(&self) -> Self;
-	fn eq(&self, other: &Self) -> bool;
-	fn isset(&self, bit: &usize) -> bool;
-	fn le(&self, other: &Self) -> bool;
-	fn lmb_pos(&self) -> usize;
-	fn lt(&self, other: &Self) -> bool;
-	fn mul(&self, other: &Self) -> Self;
-	fn one() -> Self;
-	fn shl(&mut self);
-	fn shli(&mut self, bit: &usize);
-	fn shr(&mut self);
-	fn xor(&self, other: &Self) -> Self;
-	fn zero() -> Self;
-}
-
-macro_rules! impl_for_unsigned {
-	() => {
-		#[inline(always)]
-		fn and(&self, other: &Self) -> Self {*self & *other}
-		#[inline(always)]
-		fn copy(&self) -> Self {*self}
-		#[inline(always)]
-		fn eq(&self, other: &Self) -> bool {*self == *other}
-		#[inline(always)]
-		fn isset(&self, bit: &usize) -> bool {*self & (1 << bit) != 0}
-		#[inline(always)]
-		fn le(&self, other: &Self) -> bool {*self <= *other}
-		fn lmb_pos(&self) -> usize {
-			let mut value = *self;
-			let mut bit = 0;
-			while value.ne(&Self::zero()) {
-				value.shr();
-				bit += 1;
-			}
-			bit
-		}
-		#[inline(always)]
-		fn lt(&self, other: &Self) -> bool {*self < *other}
-		#[inline(always)]
-		fn mul(&self, other: &Self) -> Self {*self * *other}
-		#[inline(always)]
-		fn one() -> Self {1 as Self}
-		#[inline(always)]
-		fn shl(&mut self) {*self <<= 1;}
-		#[inline(always)]
-		fn shli(&mut self, bit: &usize) {*self <<= bit}
-		#[inline(always)]
-		fn shr(&mut self) {*self >>= 1;}
-		#[inline(always)]
-		fn xor(&self, other: &Self) -> Self {*self ^ *other}
-		#[inline(always)]
-		fn zero() -> Self {0 as Self}
-	}
-}
-
-impl Unsigned for u8 {impl_for_unsigned!{}}
-impl Unsigned for u16 {impl_for_unsigned!{}}
-impl Unsigned for u32 {impl_for_unsigned!{}}
-impl Unsigned for u64 {impl_for_unsigned!{}}
-
-impl<T: Unsigned> Galois<T> {
-	pub fn irr_poly(order: T, base: T) -> Galois<T> {
+impl<T: Unsigned + Display> Galois<T> {
+	pub const fn irr_poly(order: T, base: T) -> Galois<T> {
 		Galois {order, base}
 	}
 
@@ -101,9 +41,7 @@ impl<T: Unsigned> Galois<T> {
 			term.shl();
 			i += 1;
 		}
-		if prod.lt(&self.order) {
-			return prod;
-		}
+		if prod.lt(&self.order) {return prod;}
 		(_, prod) = self.div(&prod, &self.base);
 		prod
 	}
@@ -137,12 +75,53 @@ impl<T: Unsigned> Galois<T> {
 		while !r1.eq(&zero) {
 			let (q, r) = self.div(&r0, &r1);
 			x += 1;
-			if x == 4 {
-				break;
-			}
+			if x == 4 {break;}
 			(r0, r1) = (r1, r);
 			(t0, t1) = (t1.copy(), t0.xor(&self.mul(&t1, &q)));
 		}
 		t0
+	}
+
+	fn reduce_left(&self, matrix: &mut Matrix<T>, i: usize, a_inv: &T) {
+		let mut j = i + 1;
+		let col = matrix.col();
+		while j < col {
+			matrix.set(i, j, self.mul(&matrix.get(i, j), a_inv));
+			j += 1;
+		}
+	}
+
+	fn reduce_all_left(&self, matrix: &mut Matrix<T>, i: usize, k: usize) {
+		let col = matrix.col();
+		let a = matrix.get(k, i);
+		let mut j = i;
+		while j < col {
+			matrix.set(k, j, matrix.get(k, j).xor(
+				&self.mul(&matrix.get(i, j), &a)));
+			j += 1;
+		}
+	}
+
+	fn reduce_all(&self, matrix: &mut Matrix<T>, i: usize) {
+		let row = matrix.row();
+		let mut k = 0;
+		while k < row {
+			if k != i {self.reduce_all_left(matrix, i, k)};
+			k += 1;
+		}
+	}
+
+	pub fn solve_linear(&self, matrix: &mut Matrix<T>) {
+		let (row, col) = (matrix.row(), matrix.col());
+		assert!{row + 1 == col, "augmented matrix has wrong dimensions"};
+		let mut i = 0;
+		while i < row {
+			let a = matrix.get(i, i);
+			matrix.set(i, i, T::one());
+			let a_inv = self.inv(&a);
+			self.reduce_left(matrix, i, &a_inv);
+			self.reduce_all(matrix, i);
+			i += 1;
+		}
 	}
 }
